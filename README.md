@@ -31,7 +31,7 @@ BY HOUR OF DAY ...
 ## Quick start
 
 ```bash
-cp .env.example .env          # then fill in IG_ACCESS_TOKEN and IG_USER_ID (see below)
+cp .env.example .env          # then fill in IG_ACCESS_TOKEN (see below)
 python -m instagram_pipeline run --tz Asia/Kolkata
 ```
 
@@ -145,89 +145,80 @@ and make sure the `python3` it finds is 3.10 or newer.
 Small samples are flagged. With fewer than ~10 reels, treat the output as a
 hint for what to test, not a verdict.
 
-## Getting your access token and Instagram account id
+## Getting your access token
 
-The Instagram Graph API only works for **professional (Business or Creator)
-accounts linked to a Facebook Page**. You only need to do this once
-(the token itself needs refreshing about every 60 days).
+You need an Instagram **professional account (Creator or Business)**. In the
+Instagram app, go to **Settings and activity → Account type and tools → Switch
+to professional account**.
 
-### 1. Make your Instagram account professional and link a Facebook Page
+There are two ways to get a token. **Option A is easier and needs no Facebook Page.**
 
-1. In the Instagram app: **Settings and activity → Account type and tools →
-   Switch to professional account**. Creator or Business both work.
-2. Link it to a Facebook Page you admin. If you don't have one, create a Page
-   at facebook.com/pages/create. Then in Instagram: **Edit profile →
-   Page → Connect**, or in Facebook: **Page settings → Linked accounts →
-   Instagram**.
-
-### 2. Create a Meta developer app
+### Option A: Instagram Login (no Facebook Page)
 
 1. Go to <https://developers.facebook.com/apps> and **Create app**. Register
-   as a developer first if asked.
-2. Pick the **Other** use case, then app type **Business**.
-3. In the app dashboard, add the **Instagram** product and choose
-   **API setup with Facebook login**.
-4. Note the **App ID** and **App secret** under **App settings → Basic**.
+   as a developer first if asked. Pick the **Other** use case, then app type **Business**.
+2. In the app dashboard, add the **Instagram** product and choose
+   **API setup with Instagram login**.
+3. Make your account a tester: **App roles → Roles → Add people → Instagram
+   Tester**, and enter your @handle. Accept the invite in the Instagram app
+   under **Settings → Apps and websites → Tester invites** (on the web:
+   instagram.com → Settings → Apps and websites).
+4. Back on the **API setup with Instagram login** page, under **Generate access
+   tokens**, click **Add account** / **Generate token** next to your account
+   and log in. Approve `instagram_business_basic` and
+   `instagram_business_manage_insights`.
+5. Copy the token (it starts with `IGAA`) into `.env` as `IG_ACCESS_TOKEN`.
 
-The app can stay in **Development mode**. Because you're the app's admin,
-you can use these permissions on your own account without App Review.
-
-### 3. Generate a user access token
-
-1. Open the Graph API Explorer: <https://developers.facebook.com/tools/explorer>.
-2. Select your app under **Meta App**, and **User Token** under **User or Page**.
-3. Add these permissions:
-   - `instagram_basic`
-   - `instagram_manage_insights`
-   - `pages_show_list`
-   - `pages_read_engagement`
-   - `business_management` (only needed if your Page belongs to a Business portfolio)
-4. Click **Generate Access Token** and approve the Facebook dialog. Make sure
-   you tick the Page and Instagram account you want.
-5. Copy the token into `.env` as `IG_ACCESS_TOKEN`.
-
-### 4. Exchange it for a long-lived (about 60 day) token
-
-Explorer tokens expire in about an hour. Put `IG_APP_ID` and `IG_APP_SECRET`
-in `.env`, then:
-
-```bash
-python -m instagram_pipeline exchange-token
-```
-
-Replace `IG_ACCESS_TOKEN` in `.env` with the printed token. (You can also use
-the **Access Token Debugger** → *Extend Access Token* in the Meta developer tools.)
-Repeat this step when the token expires. The tool tells you when the API
-rejects your token (error code 190).
-
-### 5. Find your Instagram account id
-
-The id you need is the **Instagram Business Account id** (a long number like
-`17841400000000000`). It is not your @handle and not your Page id.
+You don't need to set anything else. The tool sees the `IG` prefix, talks to
+`graph.instagram.com`, and uses your own account (`me`), so `IG_USER_ID` is
+optional. Check it with:
 
 ```bash
 python -m instagram_pipeline find-account
-# Page 'My Page': IG_USER_ID=17841400000000000  (@yourhandle, 4200 followers)
+# @yourhandle (MEDIA_CREATOR, 4200 followers): IG_USER_ID=17841400000000000
 ```
 
-Put it in `.env` as `IG_USER_ID`. Under the hood that's
-`GET /me/accounts?fields=name,instagram_business_account`.
+Tokens from the dashboard last about 60 days. Before one expires, extend it with:
 
-### Instagram Login tokens
+```bash
+python -m instagram_pipeline refresh-token   # prints a new token for .env
+```
 
-If you got your token through **"Instagram API with Instagram Login"**
-(an `IGAA...` token from graph.instagram.com) instead of Facebook Login, set
-`IG_GRAPH_HOST=graph.instagram.com` and use the id returned by
-`GET https://graph.instagram.com/me?fields=user_id,username`. Reels insights
-work the same way. `find-account` and `exchange-token` are for the Facebook
-Login flow only.
+The app can stay in **Development mode**. As a tester on your own app, you can
+use it on your own account without App Review.
+
+### Option B: Facebook Login (needs a linked Facebook Page)
+
+Use this if your account is already linked to a Facebook Page, or you want
+to manage it through Meta Business Suite.
+
+1. Link the Instagram account to a Facebook Page you admin: in Instagram,
+   **Edit profile → Page → Connect**, or in Facebook, **Page settings → Linked
+   accounts → Instagram**.
+2. Create an app as in Option A step 1. Add the **Instagram** product and
+   choose **API setup with Facebook login**. Note the **App ID** and **App
+   secret** under **App settings → Basic**.
+3. Open the Graph API Explorer at <https://developers.facebook.com/tools/explorer>.
+   Pick your app and **User Token**, and add `instagram_basic`,
+   `instagram_manage_insights`, `pages_show_list` and `pages_read_engagement`
+   (plus `business_management` if the Page is in a Business portfolio). Click
+   **Generate Access Token** and tick your Page and Instagram account.
+4. Explorer tokens expire in about an hour. Put the token in `.env` as
+   `IG_ACCESS_TOKEN`, and add `IG_APP_ID` and `IG_APP_SECRET`. Then run
+   `python -m instagram_pipeline exchange-token` and replace the token with the
+   printed one, which lasts about 60 days.
+5. Run `python -m instagram_pipeline find-account`. It lists your Pages and the
+   linked **Instagram Business Account id** (a long number, not your @handle or
+   Page id). Put it in `.env` as `IG_USER_ID`. This flow requires it.
+
+If the API rejects a token (error code 190), it has expired. Generate a new one.
 
 ## Security notes
 
 - `.env`, `data/` and `output/` are git-ignored. `data/reels.json` contains no token.
 - The token is sent only to the Graph API host and is redacted from every log
   line and error message.
-- If `IG_APP_SECRET` is set, every request carries an `appsecret_proof`, so a
+- With a Facebook Login token and `IG_APP_SECRET` set, every request carries an `appsecret_proof`, so a
   leaked token alone can't be used from elsewhere if you enable
   "Require App Secret" in your app's advanced settings.
 

@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Iterator
 
-from .config import Config
+from .config import INSTAGRAM_HOST, Config
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,8 @@ class GraphClient:
         self.max_retries = max_retries
         self._sleep = sleep
         self._proof = None
-        if config.app_secret:
+        # appsecret_proof is a Facebook Login feature; graph.instagram.com doesn't need it.
+        if config.app_secret and config.host != INSTAGRAM_HOST:
             self._proof = hmac.new(config.app_secret.encode(), config.access_token.encode(),
                                    hashlib.sha256).hexdigest()
 

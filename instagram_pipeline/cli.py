@@ -6,8 +6,9 @@
 
 Setup helpers:
 
-    python -m instagram_pipeline find-account     # list Pages + linked IG account ids
+    python -m instagram_pipeline find-account     # show the IG account id for your token
     python -m instagram_pipeline exchange-token   # short-lived -> 60-day token
+    python -m instagram_pipeline refresh-token    # extend an Instagram Login token
 
 Claude Desktop:
 
@@ -77,11 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_fetch_args(p_fetch)
 
     sub.add_parser("find-account",
-                   help="List your Facebook Pages and their linked Instagram account ids "
-                        "(needs only IG_ACCESS_TOKEN)")
+                   help="Show the Instagram account id for your token (needs only "
+                        "IG_ACCESS_TOKEN)")
     sub.add_parser("exchange-token",
-                   help="Exchange the short-lived IG_ACCESS_TOKEN for a ~60 day token "
-                        "(needs IG_APP_ID and IG_APP_SECRET)")
+                   help="Exchange a short-lived IG_ACCESS_TOKEN for a ~60 day token "
+                        "(needs IG_APP_SECRET, plus IG_APP_ID for Facebook Login)")
+    sub.add_parser("refresh-token",
+                   help="Extend a long-lived Instagram Login token by another ~60 days")
 
     sub.add_parser("mcp", help="Run as a local MCP server for Claude Desktop (stdio)")
 
@@ -91,18 +94,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _token_only_config() -> Config:
-    token = os.environ.get("IG_ACCESS_TOKEN", "").strip()
-    if not token:
-        raise ConfigError("IG_ACCESS_TOKEN is not set")
-    return Config(access_token=token, ig_user_id=os.environ.get("IG_USER_ID", ""),
-                  app_secret=os.environ.get("IG_APP_SECRET") or None,
-                  host=os.environ.get("IG_GRAPH_HOST") or "graph.facebook.com",
-                  api_version=os.environ.get("IG_API_VERSION") or "v23.0")
-
-
 def do_find_account() -> None:
-    client = GraphClient(_token_only_config())
+    cfg = Config.from_env(require_user_id=False)
+    client = GraphClient(cfg)
+    if cfg.instagram_login:
+        me = client.get("me", {"fields": "user_id,username,account_type,followers_count"})
+        print(f"@{me.get('username')} ({me.get('account_type', '?')}, "
+              f"{me.get('followers_count', '?')} followers): IG_USER_ID={me.get('user_id')}")
+        print("With an Instagram Login token IG_USER_ID is optional; 'me' is used by default.")
+        return
     found = False
     for page in client.paginate("me/accounts", {
             "fields": "name,instagram_business_account{id,username,followers_count}"}):
@@ -119,23 +119,45 @@ def do_find_account() -> None:
               "instagram_basic, pages_show_list and pages_read_engagement.")
 
 
-def do_exchange_token() -> None:
-    cfg = _token_only_config()
-    app_id = os.environ.get("IG_APP_ID", "").strip()
-    secret = (cfg.app_secret or "").strip()
-    if not app_id or not secret:
-        raise ConfigError("Set IG_APP_ID and IG_APP_SECRET to exchange the token")
-    # appsecret_proof is not needed (or wanted) on the token exchange endpoint.
-    client = GraphClient(Config(access_token=cfg.access_token, ig_user_id="",
-                                host=cfg.host, api_version=cfg.api_version))
-    data = client.get("oauth/access_token", {"grant_type": "fb_exchange_token",
-                                             "client_id": app_id, "client_secret": secret,
-                                             "fb_exchange_token": cfg.access_token})
+def _print_token(data: dict) -> None:
     days = int(data.get("expires_in", 0)) // 86400
     print("Long-lived token (put this in IG_ACCESS_TOKEN in your .env; do not share it):")
     print(data["access_token"])
     if days:
         print(f"Expires in about {days} days.")
+
+
+def do_exchange_token() -> None:
+    cfg = Config.from_env(require_user_id=False)
+    secret = (cfg.app_secret or "").strip()
+    # appsecret_proof is not needed (or wanted) on the token endpoints.
+    client = GraphClient(Config(access_token=cfg.access_token, ig_user_id="",
+                                host=cfg.host, api_version=cfg.api_version))
+    if cfg.instagram_login:
+        if not secret:
+            raise ConfigError("Set IG_APP_SECRET (the Instagram app secret) to exchange the token")
+        data = client.get(f"https://{cfg.host}/access_token", {
+            "grant_type": "ig_exchange_token", "client_secret": secret,
+            "access_token": cfg.access_token})
+    else:
+        app_id = os.environ.get("IG_APP_ID", "").strip()
+        if not app_id or not secret:
+            raise ConfigError("Set IG_APP_ID and IG_APP_SECRET to exchange the token")
+        data = client.get("oauth/access_token", {"grant_type": "fb_exchange_token",
+                                                 "client_id": app_id, "client_secret": secret,
+                                                 "fb_exchange_token": cfg.access_token})
+    _print_token(data)
+
+
+def do_refresh_token() -> None:
+    cfg = Config.from_env(require_user_id=False)
+    if not cfg.instagram_login:
+        raise ConfigError("refresh-token is for Instagram Login tokens. For a Facebook Login "
+                          "token, generate a new one and run exchange-token.")
+    client = GraphClient(Config(access_token=cfg.access_token, ig_user_id="",
+                                host=cfg.host, api_version=cfg.api_version))
+    _print_token(client.get(f"https://{cfg.host}/refresh_access_token", {
+        "grant_type": "ig_refresh_token", "access_token": cfg.access_token}))
 
 
 def do_fetch(args: argparse.Namespace) -> dict:
@@ -178,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
             do_find_account()
         elif args.command == "exchange-token":
             do_exchange_token()
+        elif args.command == "refresh-token":
+            do_refresh_token()
         elif args.command == "fetch":
             do_fetch(args)
         elif args.command == "run":
