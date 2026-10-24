@@ -1,0 +1,17 @@
+[project]
+name = "instagram-pipeline"
+version = "0.1.0"
+description = "Find the best times to post Instagram Reels from your own Graph API insights"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+instagram-pipeline = "instagram_pipeline.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["instagram_pipeline"]
