@@ -39,7 +39,7 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(len(resps), 3)  # no reply to the notification
         self.assertEqual(resps[0]["result"]["protocolVersion"], "2025-06-18")
         names = {t["name"] for t in resps[1]["result"]["tools"]}
-        self.assertEqual(names, {"best_posting_times", "list_reels", "fetch_reels"})
+        self.assertEqual(names, {"best_posting_times", "list_reels", "fetch_reels", "niche_research"})
         self.assertEqual(resps[2]["error"]["code"], -32601)
 
     def test_unknown_protocol_version_gets_latest(self):
