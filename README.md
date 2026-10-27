@@ -91,12 +91,42 @@ Tools it exposes:
 | `best_posting_times` | Full recommendation report (timezone, objective, half-life adjustable). Uses cached data, and fetches if there is none. |
 | `list_reels` | Your reels with local post time, reach, views, interactions, shares, saves, engagement rate and links. |
 | `fetch_reels` | Re-download fresh data from Instagram. |
+| `niche_research` | What's working for other creators in your niche: their top reels (hook, likes, comments, how far above their own median) and top reels for hashtags. Needs a Facebook Login token, see [Niche research](#niche-research). |
+
+It also adds a **Plan my next reels** prompt (`reel_ideas`, in the **+** menu
+of the chat box). It has Claude look at your best reels, your niche and your
+best posting times, then write reel ideas with hooks, shot-by-shot scripts and
+captions.
 
 Cached data and the latest report live in `~/.instagram_pipeline/`. Set
 `IG_DATA_DIR` to change that. The server is plain JSON-RPC over stdin/stdout
 written against the MCP spec with the standard library (`instagram_pipeline/mcp_server.py`).
 If it doesn't show up, check Claude Desktop's MCP logs (Settings → Developer)
 and make sure the `python3` it finds is 3.10 or newer.
+
+## Niche research
+
+Instagram only shares other accounts' data through two Facebook Login
+features: **Business Discovery** (any public Business/Creator account's profile
+and recent posts with likes, comments and captions) and **hashtag search** (top
+posts for a hashtag, max 30 unique hashtags per 7 days). Instagram Login tokens
+can't use either, and no API shows other accounts' views or reach. So posts are
+ranked by likes + comments, compared with that creator's own median.
+
+To turn it on, keep your Instagram Login token for your own reels and add a
+second token:
+
+1. Create a Facebook Page (it can stay empty) and link your Instagram to it.
+2. Follow [Option B](#option-b-facebook-login-needs-a-linked-facebook-page)
+   steps 2–5 to get a long-lived `EAA...` token and your numeric account id.
+   If you'll use hashtags, also add the `instagram_basic` and Instagram Public
+   Content Access permissions to the token.
+3. In `.env`, set `IG_NICHE_ACCESS_TOKEN` and `IG_NICHE_USER_ID` to those, and
+   optionally `IG_NICHE_CREATORS` / `IG_NICHE_HASHTAGS` as defaults. Restart
+   Claude Desktop.
+
+If you only use a Facebook Login token, leave the `IG_NICHE_*` token settings
+out and it uses `IG_ACCESS_TOKEN`.
 
 ## CLI options
 

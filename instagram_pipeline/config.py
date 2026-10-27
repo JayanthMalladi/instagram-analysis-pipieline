@@ -87,6 +87,21 @@ class Config:
         )
 
 
+def niche_config() -> Config:
+    """Config for niche research. IG_NICHE_ACCESS_TOKEN / IG_NICHE_USER_ID let you keep an
+    Instagram Login token for your own reels and add a Facebook Login one just for this."""
+    token = os.environ.get("IG_NICHE_ACCESS_TOKEN", "").strip()
+    if not token:
+        return Config.from_env()
+    user_id = os.environ.get("IG_NICHE_USER_ID", "").strip()
+    if not user_id:
+        raise ConfigError("Set IG_NICHE_USER_ID (the Instagram account id from find-account) "
+                          "to go with IG_NICHE_ACCESS_TOKEN")
+    # No appsecret_proof: IG_APP_SECRET may be the Instagram app secret, not the Facebook one.
+    return Config(access_token=token, ig_user_id=user_id, host=host_for_token(token),
+                  api_version=os.environ.get("IG_API_VERSION") or DEFAULT_API_VERSION)
+
+
 def host_for_token(token: str) -> str:
     """Instagram Login tokens start with "IG" (e.g. IGAA...); Facebook ones with "EAA"."""
     return INSTAGRAM_HOST if token.startswith("IG") else DEFAULT_HOST

@@ -21,8 +21,9 @@ from typing import Any, Callable, TextIO
 
 from . import __version__
 from .analysis import DAYS, AnalysisConfig
-from .config import ConfigError
-from .graph_client import GraphAPIError
+from .config import ConfigError, niche_config
+from .graph_client import GraphAPIError, GraphClient
+from .niche import niche_report, split_list
 from .pipeline import analyze_payload, fetch_payload
 from .report import render_text, to_json, write_outputs
 
@@ -35,7 +36,9 @@ INSTRUCTIONS = (
     "Call best_posting_times to answer 'when should I post'; it reuses cached data and "
     "fetches automatically if none exists. Use refresh=true or fetch_reels only when the "
     "user wants fresh numbers. Lift percentages are relative to the user's own average "
-    "reel. Mention the confidence/evidence when recommending a slot."
+    "reel. Mention the confidence/evidence when recommending a slot. "
+    "niche_research shows what is working for other creators in the user's niche; use it "
+    "with list_reels when the user asks for reel ideas or scripts."
 )
 
 
@@ -139,6 +142,17 @@ def tool_list_reels(args: dict[str, Any]) -> str:
     return json.dumps({"timezone": cfg.timezone, "count": len(out), "reels": out}, indent=1)
 
 
+def tool_niche_research(args: dict[str, Any]) -> str:
+    creators = split_list(args.get("creators") or os.environ.get("IG_NICHE_CREATORS"))
+    hashtags = split_list(args.get("hashtags") or os.environ.get("IG_NICHE_HASHTAGS"))
+    if not creators and not hashtags:
+        raise ValueError("Give some creators and/or hashtags, or set IG_NICHE_CREATORS / "
+                         "IG_NICHE_HASHTAGS (comma-separated) in .env")
+    report = niche_report(GraphClient(niche_config()), creators, hashtags,
+                          int(args.get("posts_per_creator") or 25))
+    return json.dumps(report, indent=1)
+
+
 TOOLS: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any]], str]]] = {
     "best_posting_times": ({
         "name": "best_posting_times",
@@ -171,7 +185,67 @@ TOOLS: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any]], str]]] = {
             "lookback_days": _ANALYSIS_PROPS["lookback_days"]}},
         "annotations": {"readOnlyHint": True, "openWorldHint": True},
     }, tool_fetch_reels),
+    "niche_research": ({
+        "name": "niche_research",
+        "title": "Research your niche",
+        "description": "See what's working for other creators in the user's niche: for each "
+                       "public Business/Creator @username, their follower count, typical "
+                       "likes+comments per reel and their top reels (hook, likes, comments, "
+                       "how many times their own median, link); for each hashtag, its top "
+                       "reels and related hashtags. Instagram doesn't share other accounts' "
+                       "views or reach. Hashtags: max 30 unique per 7 days. Defaults come "
+                       "from IG_NICHE_CREATORS / IG_NICHE_HASHTAGS.",
+        "inputSchema": {"type": "object", "properties": {
+            "creators": {"type": "array", "items": {"type": "string"},
+                         "description": "Instagram usernames (or profile links) to study."},
+            "hashtags": {"type": "array", "items": {"type": "string"},
+                         "description": "Hashtags without '#', e.g. fitnesstransformation."},
+            "posts_per_creator": {"type": "integer",
+                                  "description": "Recent posts to check per creator. Default 25."},
+        }},
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
+    }, tool_niche_research),
 }
+
+
+# --- prompts ----------------------------------------------------------------
+
+REEL_IDEAS_PROMPT = """Plan my next {count} Instagram Reels{topic_line}.
+
+1. Call list_reels with sort_by "score" to see which of my own reels did best and why.
+2. Call niche_research (with its defaults, or ask me for a few creators/hashtags if none are
+   set) to see which hooks and formats are working for others in my niche right now.
+3. Call best_posting_times for when to post.
+
+Then give me {count} reel ideas. For each: the format it borrows (and which reel of mine or
+of theirs it's based on), the first-second hook (what's on screen + on-screen text), a
+shot-by-shot script that lands the payoff within ~8 seconds, audio direction, a caption with
+a reason to follow or share, and when to post. Base ideas on the data, say which numbers
+you're leaning on, and don't copy anyone's reel outright."""
+
+PROMPTS: dict[str, dict[str, Any]] = {
+    "reel_ideas": {
+        "name": "reel_ideas",
+        "title": "Plan my next reels",
+        "description": "Reel ideas and scripts based on your best reels and what's working in "
+                       "your niche.",
+        "arguments": [
+            {"name": "topic", "description": "Optional theme, e.g. 'face transformation'",
+             "required": False},
+            {"name": "count", "description": "How many ideas (default 3)", "required": False},
+        ],
+    },
+}
+
+
+def _get_prompt(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name != "reel_ideas":
+        raise RpcError(-32602, f"Unknown prompt: {name}")
+    topic = (args.get("topic") or "").strip()
+    text = REEL_IDEAS_PROMPT.format(count=(args.get("count") or "3").strip() or "3",
+                                    topic_line=f" about {topic}" if topic else "")
+    return {"description": PROMPTS[name]["description"],
+            "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
 
 
 # --- JSON-RPC plumbing --------------------------------------------------------
@@ -204,7 +278,8 @@ def _dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
             else SUPPORTED_PROTOCOL_VERSIONS[0]
         return {
             "protocolVersion": version,
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {"tools": {"listChanged": False},
+                             "prompts": {"listChanged": False}},
             "serverInfo": {"name": "instagram-pipeline", "title": "Instagram Reels insights",
                            "version": __version__},
             "instructions": INSTRUCTIONS,
@@ -213,6 +288,10 @@ def _dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
         return {}
     if method == "tools/list":
         return {"tools": [spec for spec, _ in TOOLS.values()]}
+    if method == "prompts/list":
+        return {"prompts": list(PROMPTS.values())}
+    if method == "prompts/get":
+        return _get_prompt(params.get("name"), params.get("arguments") or {})
     if method == "tools/call":
         name = params.get("name")
         if name not in TOOLS:
